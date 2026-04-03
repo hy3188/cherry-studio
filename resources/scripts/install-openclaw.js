@@ -235,6 +235,28 @@ async function downloadOpenClawBinary(platform, arch, version = DEFAULT_VERSION,
 /**
  * Main function to install openclaw
  */
+/**
+ * Check for offline resources
+ */
+function checkOfflineResources() {
+  const appResourcesPath = process.env.APP_RESOURCES_PATH || path.join(__dirname, '..')
+  const platformKey = `${os.platform()}-${os.arch()}`
+  const offlineResourcePath = path.join(appResourcesPath, 'offline-resources', platformKey)
+
+  if (fs.existsSync(offlineResourcePath)) {
+    const OPENCLAW_PACKAGES = {
+      'linux-arm64': 'openclaw-linux-arm64.tar.gz',
+      'linux-x64': 'openclaw-linux-x64.tar.gz',
+    }
+    const packageName = OPENCLAW_PACKAGES[platformKey]
+    const offlinePackagePath = path.join(offlineResourcePath, packageName)
+    if (fs.existsSync(offlinePackagePath)) {
+      console.log(`📦 Found offline OpenClaw: ${offlinePackagePath}`)
+      return offlinePackagePath
+    }
+  }
+  return null
+}
 async function installOpenClaw() {
   const version = await getLatestVersion()
   const platform = os.platform()
