@@ -258,6 +258,14 @@ function checkOfflineResources() {
   return null
 }
 async function installOpenClaw() {
+   // 优先检查离线资源
+  const offlinePackagePath = checkOfflineResources()
+  if (offlinePackagePath) {
+    console.log(`✅ Using offline OpenClaw`)
+    return await extractOpenClawFromLocal(offlinePackagePath, os.platform(), os.arch())
+  }
+
+  // 原有逻辑继续...
   const version = await getLatestVersion()
   const platform = os.platform()
   const arch = os.arch()
