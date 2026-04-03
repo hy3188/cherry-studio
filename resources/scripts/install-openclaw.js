@@ -257,15 +257,61 @@ function checkOfflineResources() {
   }
   return null
 }
+
+/**
+ * Main function to install openclaw
+ */
 async function installOpenClaw() {
-   // 优先检查离线资源
+  // 优先检查离线资源
   const offlinePackagePath = checkOfflineResources()
   if (offlinePackagePath) {
-    console.log(`✅ Using offline OpenClaw`)
-    return await extractOpenClawFromLocal(offlinePackagePath, os.platform(), os.arch())
+    console.log(`✅ Using offline OpenClaw from: ${offlinePackagePath}`)
+    try {
+      const tempExtractDir = path.join(os.tmpdir(), `openclaw-extract-${Date.now()}`)
+      fs.mkdirSync(tempExtractDir, { recursive: true })
+      
+      const binDir = path.join(os.homedir(), '.cherrystudio', 'bin')
+      fs.mkdirSync(binDir, { recursive: true })
+      
+      execSync(`tar -xzf "${offlinePackagePath}" -C "${tempExtractDir}"`, { stdio: 'inherit' })
+      
+      const findAndMoveFiles = (dir) => {
+        const entries = fs.readdirSync(dir, { withFileTypes: true })
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name)
+          if (entry.isDirectory()) {
+            if (entry.name === 'lib') {
+              const destLibDir = path.join(binDir, 'lib')
+              fs.mkdirSync(destLibDir, { recursive: true })
+              const libEntries = fs.readdirSync(fullPath)
+              for (const libFile of libEntries) {
+                const srcPath = path.join(fullPath, libFile)
+                const destPath = path.join(destLibDir, libFile)
+                fs.copyFileSync(srcPath, destPath)
+              }
+            } else {
+              findAndMoveFiles(fullPath)
+            }
+          } else {
+            const filename = path.basename(entry.name)
+            const outputPath = path.join(binDir, filename)
+            fs.copyFileSync(fullPath, outputPath)
+            fs.chmodSync(outputPath, 0o755)
+          }
+        }
+      }
+      
+      findAndMoveFiles(tempExtractDir)
+      fs.rmSync(tempExtractDir, { recursive: true })
+      console.log('✅ Offline OpenClaw installed successfully')
+      return 0
+    } catch (error) {
+      console.error(`Error installing from offline resources: ${error.message}`)
+      // 继续用网络下��
+    }
   }
 
-  // 原有逻辑继续...
+  // 原有的网络下载逻辑
   const version = await getLatestVersion()
   const platform = os.platform()
   const arch = os.arch()
