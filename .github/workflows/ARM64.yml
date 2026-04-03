@@ -1,0 +1,149 @@
+mkdir -p .github/workflows
+cat > .github/workflows/build-offline-release.yml << 'EOF'
+name: Build Offline Release with OpenClaw
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.8.5)"
+        required: true
+        default: "v1.8.5"
+
+permissions:
+  contents: write
+
+env:
+  OPENCLAW_VERSION: v2026.3.13
+
+jobs:
+  prepare-openclaw:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download OpenClaw for linux-arm64
+        run: |
+          mkdir -p /tmp/openclaw-cache
+          FILENAME="openclaw-linux-arm64.tar.gz"
+          OUTPUT_PATH="/tmp/openclaw-cache/${FILENAME}"
+          
+          echo "📥 Attempting to download OpenClaw..."
+          
+          if curl -fL --progress-bar -o "$OUTPUT_PATH" \
+            "https://github.com/CherryHQ/openclaw/releases/download/v2026.3.13/${FILENAME}"; then
+            echo "✅ Downloaded from GitHub"
+          elif curl -fL --progress-bar -o "$OUTPUT_PATH" \
+            "https://gitcode.com/CherryHQ/openclaw-releases/releases/download/v2026.3.13/${FILENAME}"; then
+            echo "✅ Downloaded from GitCode"
+          else
+            echo "⚠️ Download failed, continuing without OpenClaw"
+            exit 1
+          fi
+
+      - name: Upload OpenClaw
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: openclaw-binaries
+          path: /tmp/openclaw-cache/*
+          retention-days: 1
+
+  build-offline:
+    needs: prepare-openclaw
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential rpm libevdev-dev libxtst-dev libx11-dev libxfixes-dev libwayland-dev python3-setuptools
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.node-version'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Get pnpm cache
+        id: pnpm-cache
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install project dependencies
+        run: pnpm install
+
+      - name: Download OpenClaw
+        uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: openclaw-binaries
+          path: /tmp/openclaw-cache
+
+      - name: Integrate OpenClaw
+        run: |
+          mkdir -p resources/offline-resources/linux-arm64
+          if [ -f "/tmp/openclaw-cache/openclaw-linux-arm64.tar.gz" ]; then
+            cp /tmp/openclaw-cache/openclaw-linux-arm64.tar.gz resources/offline-resources/linux-arm64/
+            echo "✅ OpenClaw integrated"
+          fi
+
+      - name: Build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=8192
+          MAIN_VITE_CHERRYAI_CLIENT_SECRET: ${{ secrets.MAIN_VITE_CHERRYAI_CLIENT_SECRET }}
+          MAIN_VITE_MINERU_API_KEY: ${{ secrets.MAIN_VITE_MINERU_API_KEY }}
+          RENDERER_VITE_AIHUBMIX_SECRET: ${{ secrets.RENDERER_VITE_AIHUBMIX_SECRET }}
+          RENDERER_VITE_PPIO_APP_SECRET: ${{ secrets.RENDERER_VITE_PPIO_APP_SECRET }}
+        run: pnpm build:linux:arm64
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p dist-offline
+          find dist -name "*-arm64.AppImage" -o -name "*.snap" | xargs -I {} cp {} dist-offline/ 2>/dev/null || true
+          cd dist-offline && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cherry-studio-offline-${{ github.run_id }}
+          path: dist-offline/*
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.event.inputs.tag }}-offline-arm64
+          name: "Cherry Studio ${{ github.event.inputs.tag }} - Offline (linux-arm64)"
+          draft: false
+          artifacts: "dist-offline/*"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            # 🎁 Offline Release for linux-arm64
+            
+            **OpenClaw**: Pre-integrated v2026.3.13
+            
+            ## 📥 Installation
+            
+            ```bash
+            chmod +x Cherry-Studio-*.AppImage
+            ./Cherry-Studio-*.AppImage
+            ```
+            
+            ## ✅ Verify
+            
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+            
+            Completely offline, no internet required!
+EOF
+cat .github/workflows/build-offline-release.yml
